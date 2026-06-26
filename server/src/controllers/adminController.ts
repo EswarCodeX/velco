@@ -77,10 +77,33 @@ class AdminController {
     }
   }
 
+  /**
+   * Real-time Order Stream (Server-Sent Events)
+   */
   public async viewOrders(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const orders = await Order.find().populate("userId").populate("deliveryRiderId");
-      res.status(200).json(orders);
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+
+      const sendOrders = async (type: string, changedOrder?: any) => {
+        const orders = await Order.find().populate("userId").populate("deliveryRiderId");
+        res.write(`data: ${JSON.stringify({ type, changedOrder, orders })}\n\n`);
+      };
+
+      await sendOrders("initial");
+
+      const handleOrderChange = async (event: { type: string; order?: any; orderId?: string }) => {
+        await sendOrders(event.type, event.order || { _id: event.orderId });
+      };
+
+      orderEvents.on("change", handleOrderChange);
+
+      req.on("close", () => {
+        orderEvents.off("change", handleOrderChange);
+        res.end();
+      });
     } catch (error) {
       next(error);
     }
@@ -94,6 +117,10 @@ class AdminController {
         res.status(404).json({ message: "Order not found" });
         return;
       }
+      
+      // Emit event
+      orderEvents.emit("change", { type: "delete", orderId: id });
+      
       res.status(200).json({ message: "Order deleted successfully" });
     } catch (error) {
       next(error);
