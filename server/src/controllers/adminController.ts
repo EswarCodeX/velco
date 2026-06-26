@@ -4,7 +4,7 @@ import User from "../models/User.js";
 import Order from "../models/Order.js";
 import jwt from "jsonwebtoken";
 import { config } from "../config.js";
-import { orderEvents } from "../utils/orderEvents.js";
+import { socketManager } from "../socket.js";
 
 class AdminController {
   public async loginAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -45,6 +45,15 @@ class AdminController {
     try {
       const clients = await User.find({ role: "client" });
       res.status(200).json(clients);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async getAllRiders(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const riders = await User.find({ role: "delivery" });
+      res.status(200).json(riders);
     } catch (error) {
       next(error);
     }
@@ -140,14 +149,17 @@ class AdminController {
         orderId,
         { deliveryRiderId, status: "assigned" },
         { new: true }
-      );
+      ).populate("userId");
       if (!order) {
         res.status(404).json({ message: "Order not found" });
         return;
       }
-
-      // Emit event
-      orderEvents.emit("change", { type: "update", order });
+      
+      // Notify rider in real-time via WebSocket
+      socketManager.sendToRider(deliveryRiderId, {
+        type: "new_order",
+        order
+      });
 
       res.status(200).json({ message: "Delivery assigned successfully", order });
     } catch (error) {
